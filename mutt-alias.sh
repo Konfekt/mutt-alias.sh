@@ -1,14 +1,21 @@
 #!/bin/sh
 
+mutt_expand_path() {
+    eval "$(mutt -Q folder)"
+    val="${1/#=/$folder\/}"
+    val="${val/#\~/$HOME}"
+    echo "$val"
+}
+
 # Define usage
 usage() {
   cat <<EOF
 Usage: $0 [-a alias file] [-d days] [-p] [-f] [-b] [-n] DIRECTORIES
 Built mutt aliases from maildir emails in DIRECTORIES.
 OPTIONS:
+  -a          alias file (default: value of \$alias_file in ~/.muttrc)
   -d          maximal number of days since last sent mail to (default: 0 = unlimited)
   -p          purge aliases previously added by $0
-  -a          alias file (default: value of \$alias_file in ~/.muttrc)
   -f          filter out email addresses that are probably impersonal
   -b          backup the current alias file (if it exists) to *.prev
   -n          create a new alias file instead of modifying the current one
@@ -18,9 +25,6 @@ EOF
 }
 
 # Parse options
-alias_file=$(grep --extended-regexp --only-matching --no-filename '^\s*set\s+alias_file\s*=.*$' ~/.muttrc)
-alias_file=$(echo "${alias_file}" | grep --extended-regexp --only-matching --no-filename '[^=]+$' -)
-alias_file=$(eval echo "${alias_file}")
 
 max_age=0
 purge='false'
@@ -42,6 +46,22 @@ done
 shift $((OPTIND-1))
 
 if [ $# = 0 ]; then usage; fi
+
+if ! [ -n "$alias_file" ]; then
+  if [ -x mutt ]; then
+    alias_file="$(mutt -Q "alias_file")"
+    alias_file=$(mutt_expand_path "$alias_file")
+  elif [ -f ~/.muttrc ]; then
+    alias_file=$(grep --extended-regexp --only-matching --no-filename '^\s*set\s+alias_file\s*=.*$' ~/.muttrc)
+    alias_file=$(echo "${alias_file}" | grep --extended-regexp --only-matching --no-filename '[^=]+$' -)
+    alias_file=$(eval echo "${alias_file}")
+  fi
+fi
+
+if ! [ -f "$alias_file" ]; then
+  echo "No alias file found. Exiting!"
+  exit
+fi
 
 # Make backup and/or clear previous database
 alias_file_prev="${alias_file}.prev"
@@ -86,7 +106,7 @@ for directory in "$@"; do
     # Split To: on `,` for multiple recipients
     IFS=','
     for each_to in $in_to; do
-      # first delete whitespace (possibly leading space from `, `),
+      # first delete white space (possibly leading space from `, `),
       # then remove real name (if present),
       # then make lower-case
       out_to="$( <<<"$each_to" tr --delete '[:space:]' | sed --regexp-extended 's/.*<(.*)>/\1/' )"
@@ -98,7 +118,7 @@ for directory in "$@"; do
       if [[ "$out_to" =~ ^${email_regexp}$ ]]; then
         # Find previous entry's line number
         alias_line="alias ${out_to} ${out_to}"
-        prev_line_number="$(fgrep --ignore-case --max-count=1 "${alias_line}" "${alias_file}")"
+        prev_line_number="$(grep -F --ignore-case --max-count=1 "${alias_line}" "${alias_file}")"
         if ( [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ] ) && [ "${prev_line_number}" = "" ]; then
           hr_out_date="$( date --date=@"$out_date" +%Y-%m-%d@%H:%M:%S )"
           new_entry="alias ${out_to} ${out_to} # mutt-alias: e-mail sent on ${hr_out_date}"
