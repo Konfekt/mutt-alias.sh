@@ -131,7 +131,7 @@ for directory in "$@"; do
 done
 
 if [ "$filter" = "true" ]; then
-  filter_regexp="^alias ([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|not?([-_.])?reply|\b(un)?subscribe\b|\bMAILER\-DAEMON\b)[[:alnum:]._%+-]*\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}) \1 # mutt-alias: e-mail sent on [[:digit:]]+"
+  filter_regexp="^alias ([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|nicht-?antworten|ne-?pas-?repondre|not?([-_.])?reply|\b(un)?subscribe\b|\bMAILER\-DAEMON\b)[[:alnum:]._%+-]*\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}) \1 # mutt-alias: e-mail sent on [[:digit:]]+"
   grep --extended-regexp --ignore-case --invert-match \
   "$filter_regexp" \
   "${alias_file}" > "${alias_file}.filtered"
