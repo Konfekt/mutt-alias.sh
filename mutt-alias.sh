@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 mutt_expand_path() {
     eval "$(mutt -Q folder)"
@@ -47,13 +47,13 @@ shift $((OPTIND-1))
 
 if [ $# = 0 ]; then usage; fi
 
-if ! [ -n "$alias_file" ]; then
+if [ -z "$alias_file" ]; then
   if [ -x mutt ]; then
     alias_file="$(mutt -Q "alias_file")"
     alias_file=$(mutt_expand_path "$alias_file")
   elif [ -f ~/.muttrc ]; then
-    alias_file=$(grep --extended-regexp --only-matching --no-filename '^\s*set\s+alias_file\s*=.*$' ~/.muttrc)
-    alias_file=$(echo "${alias_file}" | grep --extended-regexp --only-matching --no-filename '[^=]+$' -)
+    alias_file=$(grep -E --only-matching --no-filename '^\s*set\s+alias_file\s*=.*$' ~/.muttrc)
+    alias_file=$(echo "${alias_file}" | grep -E --only-matching --no-filename '[^=]+$' -)
     alias_file=$(eval echo "${alias_file}")
   fi
 fi
@@ -80,6 +80,7 @@ echo Using "${alias_file}" to store aliases...
 
 # make temporary copy of alias file
 alias_file_orig="${alias_file}"
+TMPDIR=${TMPDIR:-/tmp}
 tmp_dir=$(mktemp --directory "$TMPDIR/mutt-alias.XXXXXXXXXX")
 alias_file="${tmp_dir}"/aliases
 cp "${alias_file_orig}" "${alias_file}"
@@ -88,7 +89,7 @@ email_regexp="[[:alnum:]._%+-]+\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}"
 
 if [ "$purge" = true ]; then
   alias_regexp="^alias (${email_regexp}) \1 # mutt-alias: e-mail sent on [[:digit:]]+"
-  sed --regexp-extended --in-place "/${alias_regexp}/d" "${alias_file}"
+  sed -E --in-place "/${alias_regexp}/d" "${alias_file}"
 fi
 
 for directory in "$@"; do
@@ -109,7 +110,7 @@ for directory in "$@"; do
       # first delete white space (possibly leading space from `, `),
       # then remove real name (if present),
       # then make lower-case
-      out_to="$( <<<"$each_to" tr --delete '[:space:]' | sed --regexp-extended 's/.*<(.*)>/\1/' )"
+      out_to="$( <<<"$each_to" tr --delete '[:space:]' | sed -E 's/.*<(.*)>/\1/' )"
       out_to=$(echo "$out_to" | tr "[:upper:]" "[:lower:]")
 
       now=$(date +%s)
@@ -117,9 +118,9 @@ for directory in "$@"; do
 
       if [[ "$out_to" =~ ^${email_regexp}$ ]]; then
         # Find previous entry's line number
-        alias_line="alias ${out_to} ${out_to}"
-        prev_line_number="$(grep -F --ignore-case --max-count=1 "${alias_line}" "${alias_file}")"
-        if ( [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ] ) && [ "${prev_line_number}" = "" ]; then
+        alias_line="alias ${out_to} ${out_to} # mutt-alias: e-mail sent on "
+        prev_line_number="$(grep -F -i --max-count=1 "${alias_line}" "${alias_file}")"
+        if { [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; } && [ "${prev_line_number}" = "" ]; then
           hr_out_date="$( date --date=@"$out_date" +%Y-%m-%d@%H:%M:%S )"
           new_entry="alias ${out_to} ${out_to} # mutt-alias: e-mail sent on ${hr_out_date}"
           echo "${new_entry}" >> "${alias_file}"
@@ -132,7 +133,7 @@ done
 
 if [ "$filter" = "true" ]; then
   filter_regexp="^alias ([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|nicht-?antworten|ne-?pas-?repondre|not?([-_.])?reply|\b(un)?subscribe\b|\bMAILER\-DAEMON\b)[[:alnum:]._%+-]*\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}) \1 # mutt-alias: e-mail sent on [[:digit:]]+"
-  grep --extended-regexp --ignore-case --invert-match \
+  grep -E -i --invert-match \
   "$filter_regexp" \
   "${alias_file}" > "${alias_file}.filtered"
 
@@ -144,7 +145,7 @@ mv "${alias_file}" "${alias_file_orig}"
 rmdir "${tmp_dir}"
 
 # Return time it took to run, removing leading zeros
-TOTALTIME=$(date --date="1970-01-01 ${SECONDS} sec" +'%T' | sed --regexp-extended 's/^0(0:(0)?)?//')
+TOTALTIME=$(date --date="1970-01-01 ${SECONDS} sec" +'%T' | sed -E 's/^0(0:(0)?)?//')
 echo "Database updated in ${TOTALTIME}."
 
 # ex:ft=sh
