@@ -28,6 +28,8 @@ and this command would add all addresses you sent an e-mail to in the last year:
   mutt-alias.sh -d 365 -bpf "$XDG_DATA_HOME"/mbsync/work/Sent/cur
 ```
 
+To decode [7-bit ASCII encoded full names that contain non-ASCII letters](https://tools.ietf.org/html/rfc2047) (which start, for example, with `=?UTF-8?Q?` or `=?ISO-8859-1?Q?`), ensure that `perl` is executable and the [Encode::MIME:Header](https://perldoc.perl.org/Encode/MIME/Header.html) module is installed.
+
 # Related
 
 The [vim-mutt-aliases](https://github.com/Konfekt/vim-mutt-aliases) plug-in lets you complete e-mail addresses in Vim by those in your `mutt` alias file.
