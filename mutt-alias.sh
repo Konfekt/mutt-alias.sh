@@ -112,17 +112,18 @@ for directory in "$@"; do
       # then make lower-case
       out_to="$( <<<"$each_to" tr --delete '[:space:]' | sed -E 's/.*<(.*)>/\1/' )"
       out_to=$(echo "$out_to" | tr "[:upper:]" "[:lower:]")
+      name_to="$( <<<"$each_to" tr --delete '[]' | sed --regexp-extended 's/(.*)<.*>/\1/' )"
+      alias_to=${out_to%@*}
 
       now=$(date +%s)
       out_age=$(( (now - out_date) / 86400 ))
 
       if [[ "$out_to" =~ ^${email_regexp}$ ]]; then
         # Find previous entry's line number
-        alias_line="alias ${out_to} ${out_to} # mutt-alias: e-mail sent on "
-        prev_line_number="$(grep -F -i --max-count=1 "${alias_line}" "${alias_file}")"
+        prev_line_number="$(grep -F -i --max-count=1 "${out_to}" "${alias_file}")"
         if { [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; } && [ "${prev_line_number}" = "" ]; then
           hr_out_date="$( date --date=@"$out_date" +%Y-%m-%d@%H:%M:%S )"
-          new_entry="alias ${out_to} ${out_to} # mutt-alias: e-mail sent on ${hr_out_date}"
+          new_entry="alias ${alias_to} $name_to <${out_to}> # mutt-alias: e-mail sent on ${hr_out_date}"
           echo "${new_entry}" >> "${alias_file}"
         fi
       fi
