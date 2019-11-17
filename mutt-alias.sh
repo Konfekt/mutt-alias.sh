@@ -110,9 +110,11 @@ for directory in "$@"; do
       # first delete white space (possibly leading space from `, `),
       # then remove real name (if present),
       # then make lower-case
-      out_to="$( <<<"$each_to" tr --delete '[:space:]' | sed -E 's/.*<(.*)>/\1/' )"
+      out_to="$( <<<"$each_to" tr -d '[:space:]' | sed -E 's/.*<(.*)>/\1/' )"
       out_to=$(echo "$out_to" | tr "[:upper:]" "[:lower:]")
-      name_to="$( <<<"$each_to" tr --delete '[]' | sed --regexp-extended 's/(.*)<.*>/\1/' )"
+      # get real name
+      name_to="$( <<<"$each_to" sed -E 's/(.*)<.*>/\1/' )"
+      # get alias by removing domain
       alias_to=${out_to%@*}
 
       now=$(date +%s)
@@ -135,8 +137,8 @@ done
 if [ "$filter" = "true" ]; then
   filter_regexp="^alias ([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|nicht-?antworten|ne-?pas-?repondre|not?([-_.])?reply|\b(un)?subscribe\b|\bMAILER\-DAEMON\b)[[:alnum:]._%+-]*\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}) \1 # mutt-alias: e-mail sent on [[:digit:]]+"
   grep -E -i --invert-match \
-  "$filter_regexp" \
-  "${alias_file}" > "${alias_file}.filtered"
+    "$filter_regexp" \
+    "${alias_file}" > "${alias_file}.filtered"
 
   mv "${alias_file}.filtered" "${alias_file}"
 fi
