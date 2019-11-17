@@ -134,6 +134,12 @@ for directory in "$@"; do
   done
 done
 
+if perl -e 'use Encode::MIME::Header;' > /dev/null 2>&1; then
+  perl -CS -MEncode -ne 'print decode("MIME-Header", $_)' \
+    "${alias_file}" > "${alias_file}.decoded"
+  mv "${alias_file}.decoded" "${alias_file}"
+fi
+
 if [ "$filter" = "true" ]; then
   filter_regexp="^alias ([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|nicht-?antworten|ne-?pas-?repondre|not?([-_.])?reply|\b(un)?subscribe\b|\bMAILER\-DAEMON\b)[[:alnum:]._%+-]*\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}) \1 # mutt-alias: e-mail sent on [[:digit:]]+"
   grep -E -i --invert-match \
