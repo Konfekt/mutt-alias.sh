@@ -88,7 +88,7 @@ cp "${alias_file_orig}" "${alias_file}"
 email_regexp="[[:alnum:]._%+-]+\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}"
 
 if [ "$purge" = true ]; then
-  alias_regexp="^alias (${email_regexp}) \1 # mutt-alias: e-mail sent on [[:digit:]]+"
+  alias_regexp="^alias ([[:alnum:]._%+-]+) .* <\1\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}> # mutt-alias: e-mail sent on [[:digit:]]+"
   sed -E --in-place "/${alias_regexp}/d" "${alias_file}"
 fi
 
