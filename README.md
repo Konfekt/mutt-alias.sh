@@ -28,7 +28,7 @@ and this command would add all addresses you sent an e-mail to in the last year:
   mutt-alias.sh -d 365 -bpf "$XDG_DATA_HOME"/mbsync/work/Sent/cur
 ```
 
-To decode [7-bit ASCII encoded full names that contain non-ASCII letters](https://tools.ietf.org/html/rfc2047) (which start, for example, with `=?UTF-8?Q?` or `=?ISO-8859-1?Q?`), ensure that `perl` is executable and the [Encode::MIME:Header](https://perldoc.perl.org/Encode/MIME/Header.html) module is installed.
+To decode [7-bit ASCII encoded full names that contain non-ASCII letters](https://tools.ietf.org/html/rfc2047) (which start, for example, with `=?UTF-8?Q?` or `=?ISO-8859-1?Q?`), ensure that `perl` is executable and the [Encode::MIME::Header](https://perldoc.perl.org/Encode/MIME/Header.html) module is installed.
 
 # Related
 
