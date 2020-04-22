@@ -48,7 +48,7 @@ shift $((OPTIND-1))
 if [ $# = 0 ]; then usage; fi
 
 if [ -z "$alias_file" ]; then
-  if [ -x mutt ]; then
+  if command -v mutt >/dev/null 2>&1; then
     alias_file="$(mutt -Q "alias_file")"
     alias_file=$(mutt_expand_path "$alias_file")
   elif [ -f ~/.muttrc ]; then
