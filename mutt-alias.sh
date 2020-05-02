@@ -82,7 +82,7 @@ email_regexp="[[:alnum:]._%+-]+\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}"
 
 if [ "$purge" = true ]; then
   alias_regexp="^alias ([[:alnum:]._%+-]+) .* <\1\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}> # mutt-alias: e-mail sent on [[:digit:]]+"
-  sed -E --in-place "/${alias_regexp}/d" "${alias_file}"
+  sed -Ei "/${alias_regexp}/d" "${alias_file}"
 fi
 
 for directory in "$@"; do
@@ -135,7 +135,7 @@ fi
 
 if [ "$filter" = "true" ]; then
   filter_regexp="<([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|nicht-?antworten|ne-?pas-?repondre|not?([-_.])?reply|\b(un)?subscribe\b|\bMAILER\-DAEMON\b)[[:alnum:]._%+-]*\@([[:alnum:]-]+\.)+[[:alpha:]]{2,})> # mutt-alias: e-mail sent on"
-  grep -E -i --invert-match \
+  grep -Eiv \
     "$filter_regexp" \
     "${alias_file}" > "${alias_file}.filtered"
 
