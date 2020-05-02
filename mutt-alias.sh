@@ -1,12 +1,5 @@
 #!/bin/bash
 
-mutt_expand_path() {
-    eval "$(mutt -Q folder)"
-    val="${1/#=/$folder\/}"
-    val="${val/#\~/$HOME}"
-    echo "$val"
-}
-
 # Define usage
 usage() {
   cat <<EOF
@@ -50,13 +43,13 @@ if [ $# = 0 ]; then usage; fi
 if [ -z "$alias_file" ]; then
   if command -v mutt >/dev/null 2>&1; then
     alias_file="$(mutt -Q "alias_file")"
-    alias_file=$(mutt_expand_path "$alias_file")
   elif [ -f ~/.muttrc ]; then
     alias_file=$(grep -E --only-matching --no-filename '^\s*set\s+alias_file\s*=.*$' ~/.muttrc)
-    alias_file=$(echo "${alias_file}" | grep -E --only-matching --no-filename '[^=]+$' -)
-    alias_file=$(eval echo "${alias_file}")
   fi
+  alias_file=$(echo "${alias_file}" | grep -E --only-matching '[^=]+$' -)
 fi
+alias_file=$(eval echo "${alias_file}")
+alias_file="${alias_file/\~/$HOME}"
 
 if ! [ -f "$alias_file" ]; then
   echo "No alias file found. Exiting!"
