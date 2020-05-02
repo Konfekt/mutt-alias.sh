@@ -34,6 +34,8 @@ To decode [7-bit ASCII encoded full names that contain non-ASCII letters](https:
 
 The [vim-mutt-aliases](https://github.com/Konfekt/vim-mutt-aliases) plug-in lets you complete e-mail addresses in Vim by those in your `mutt` alias file.
 
+The [auto_add_alias.sh](http://wcaleb.org/blog/mutt-tips) shell script adds an alias via `$display_fiter` for every opened e-mail (and is expanded on in [mutt-alias-auto-add](https://github.com/teddywing/mutt-alias-auto-add)).
+
 # Setup
 
 Best run by a, say weekly, (ana)cronjob, on AC/DC as outlined in my [blogpost on a sane (ana)cron setup](https://konfekt.github.io/blog/2016/12/11/sane-cron-setup).
@@ -42,3 +44,4 @@ Best run by a, say weekly, (ana)cronjob, on AC/DC as outlined in my [blogpost on
 
 Lee M. Yeoh's shell script [mutt-vid](https://gitlab.com/protist/mutt-vid) served as a template and which is under GNU General Public License v3.0;
 thus, the same conditions apply.
+
