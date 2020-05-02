@@ -43,8 +43,8 @@ if [ $# = 0 ]; then usage; fi
 if [ -z "$alias_file" ]; then
   if command -v mutt >/dev/null 2>&1; then
     alias_file="$(mutt -Q "alias_file")"
-  elif [ -f ~/.muttrc ]; then
-    alias_file=$(grep -E --only-matching --no-filename '^\s*set\s+alias_file\s*=.*$' ~/.muttrc)
+  elif [ -f "$HOME/.muttrc" ]; then
+    alias_file=$(grep -E --only-matching --no-filename '^\s*set\s+alias_file\s*=.*$' "$HOME/.muttrc")
   fi
   alias_file=$(echo "${alias_file}" | grep -E --only-matching '[^=]+$' -)
 fi
