@@ -53,7 +53,7 @@ alias_file="${alias_file/\~/$HOME}"
 
 if ! [ -f "$alias_file" ]; then
   echo "No alias file found. Exiting!"
-  exit
+  exit 1
 fi
 
 # Make backup and/or clear previous database
