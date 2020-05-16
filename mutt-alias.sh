@@ -85,7 +85,10 @@ if [ "$purge" = true ]; then
   sed -Ei "/${alias_regexp}/d" "${alias_file}"
 fi
 
+old_IFS=$IFS
 for directory in "$@"; do
+  # Restore IFS
+  IFS=${old_IFS}
   echo "Processing ${directory}"
   if [ "${max_age}" = "0" ]; then
       emails="${directory}"/*
@@ -132,6 +135,9 @@ for directory in "$@"; do
     IFS=" "
   done
 done
+
+# Restore IFS
+IFS=${old_IFS}
 
 if perl -e 'use Encode::MIME::Header;' > /dev/null 2>&1; then
   perl -CS -MEncode -ne 'print decode("MIME-Header", $_)' \
