@@ -144,14 +144,6 @@ if [ "$filter" = "true" ]; then
     "${alias_file_new}" > "${alias_file_new}.filtered"
 
   mv "${alias_file_new}.filtered" "${alias_file_new}"
-
-  # Second round of filtering
-  filter_regexp="<([[:alnum:]._%+-]*\@noreply\..*)> # mutt-alias: e-mail sent on"
-  grep -Eiv \
-    "$filter_regexp" \
-    "${alias_file_new}" > "${alias_file_new}.filtered"
-
-  mv "${alias_file_new}.filtered" "${alias_file_new}"
 fi
 
 # append new entries to the alias file
