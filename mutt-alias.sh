@@ -87,9 +87,18 @@ if [ "$purge" = true ]; then
   sed -Ei "/${alias_regexp}/d" "${alias_file}"
 fi
 
+old_IFS=$IFS
 for directory in "$@"; do
+  # Restore IFS
+  IFS=${old_IFS}
   echo "Processing ${directory}"
-  for email in "$directory/"*; do
+  if [ "${max_age}" = "0" ]; then
+      emails="${directory}"/*
+  else
+      emails="$(find "${directory}" -type f -mtime "-${max_age}")"
+  fi
+
+  for email in $emails; do
     # Parse "To:"
     in_to="$(awk 'BEGIN {found="no"}; ((found=="yes") && /^\S/) || /^$/ {exit}; (found=="yes") && /^\s/ { printf "%s", $0 }; /^To:/ {found="yes"; sub(/^To: ?/, "", $0) ; printf "%s", $0}' "$email")"
 
@@ -130,6 +139,8 @@ for directory in "$@"; do
   done
 done
 
+# Restore IFS
+IFS=${old_IFS}
 
 if perl -e 'use Encode::MIME::Header;' > /dev/null 2>&1; then
   perl -CS -MEncode -ne 'print decode("MIME-Header", $_)' \
