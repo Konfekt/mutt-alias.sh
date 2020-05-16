@@ -87,7 +87,13 @@ fi
 
 for directory in "$@"; do
   echo "Processing ${directory}"
-  for email in "$directory/"*; do
+  if [ "${max_age}" = "0" ]; then
+      emails="${directory}"/*
+  else
+      emails="$(find "${directory}" -type f -mtime "-${max_age}")"
+  fi
+
+  for email in $emails; do
     # Parse "To:"
     in_to="$(awk 'BEGIN {found="no"}; ((found=="yes") && /^\S/) || /^$/ {exit}; (found=="yes") && /^\s/ { printf "%s", $0 }; /^To:/ {found="yes"; sub(/^To: ?/, "", $0) ; printf "%s", $0}' "$email")"
 
