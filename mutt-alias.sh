@@ -76,7 +76,9 @@ alias_file_orig="${alias_file}"
 TMPDIR=${TMPDIR:-/tmp}
 tmp_dir=$(mktemp --directory "$TMPDIR/mutt-alias.XXXXXXXXXX")
 alias_file="${tmp_dir}"/aliases
+alias_file_new="${tmp_dir}"/aliases.new
 cp "${alias_file_orig}" "${alias_file}"
+touch "${alias_file_new}"
 
 email_regexp="[[:alnum:]._%+-]+\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}"
 
@@ -123,12 +125,13 @@ for directory in "$@"; do
       out_age=$(( (now - out_date) / 86400 ))
 
       if [[ "$out_to" =~ ^${email_regexp}$ ]]; then
-        # Find previous entry's line number
-        prev_line_number="$(grep -F -i --max-count=1 "${out_to}" "${alias_file}")"
-        if { [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; } && [ "${prev_line_number}" = "" ]; then
+        # Find previous entry
+        grep -F -i -q "${out_to}" "${alias_file}" "${alias_file_new}"
+        grep_ret=$?
+        if { [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; } && [ "${grep_ret}" != "0" ]; then
           hr_out_date="$( date --date=@"$out_date" +%Y-%m-%d@%H:%M:%S )"
           new_entry="alias ${alias_to} $name_to <${out_to}> # mutt-alias: e-mail sent on ${hr_out_date}"
-          echo "${new_entry}" >> "${alias_file}"
+          echo "${new_entry}" >> "${alias_file_new}"
         fi
       fi
     done
@@ -141,18 +144,22 @@ IFS=${old_IFS}
 
 if perl -e 'use Encode::MIME::Header;' > /dev/null 2>&1; then
   perl -CS -MEncode -ne 'print decode("MIME-Header", $_)' \
-    "${alias_file}" > "${alias_file}.decoded"
-  mv "${alias_file}.decoded" "${alias_file}"
+    "${alias_file_new}" > "${alias_file_new}.decoded"
+  mv "${alias_file_new}.decoded" "${alias_file_new}"
 fi
 
 if [ "$filter" = "true" ]; then
   filter_regexp="<([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|nicht-?antworten|ne-?pas-?repondre|not?([-_.])?reply|\b(un)?subscribe\b|\bMAILER\-DAEMON\b)[[:alnum:]._%+-]*\@([[:alnum:]-]+\.)+[[:alpha:]]{2,})> # mutt-alias: e-mail sent on"
   grep -Eiv \
     "$filter_regexp" \
-    "${alias_file}" > "${alias_file}.filtered"
+    "${alias_file_new}" > "${alias_file_new}.filtered"
 
-  mv "${alias_file}.filtered" "${alias_file}"
+  mv "${alias_file_new}.filtered" "${alias_file_new}"
 fi
+
+# append new entries to the alias file
+cat "${alias_file_new}" >> ${alias_file}
+rm "${alias_file_new}"
 
 # override alias file by temporary copy of alias file
 mv "${alias_file}" "${alias_file_orig}"
