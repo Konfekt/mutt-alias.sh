@@ -1,11 +1,11 @@
-For convenient tab-completion of recently used e-mail addresses inside mutt, this shell script populates the `$mutt_alias` file with all e-mail addresses found in a recent mail in the `INBOX` or `Sent` (or any other mail) folder.
+For convenient tab-completion of recently used e-mail addresses inside mutt, this shell script populates the `$mutt_alias` file with all e-mail addresses found in a recent mail in the `INBOX` or `Sent` (or any other local [maildir](https://gitlab.com/muttmua/mutt/-/wikis/MuttFaq/Maildir)) folder.
 
 # Usage
 
 ```sh
 mutt-alias.sh [-a alias file] [-d days] [-p] [-f] [-b] [-n] DIRECTORIES
 
-Add mutt aliases for all e-mails addresses found in DIRECTORIES.
+Add mutt aliases for all e-mails addresses found in local maildir DIRECTORIES.
 
 OPTIONS:
   -a          alias file (default: value of $alias_file in ~/.muttrc)
