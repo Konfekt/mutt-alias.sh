@@ -9,7 +9,8 @@ OPTIONS:
   -a          alias file (default: value of \$alias_file in ~/.muttrc)
   -d          maximal number of days since last sent mail to (default: 0 = unlimited)
   -p          purge aliases previously added by $0
-  -f          filter out email addresses that are probably impersonal
+  -f          filter out added email addresses that are probably impersonal
+  -F          filter out all email addresses that are probably impersonal
   -b          backup the current alias file (if it exists) to *.prev
   -n          create a new alias file instead of modifying the current one
   -h          display this help and exit
@@ -22,15 +23,17 @@ EOF
 max_age=0
 purge='false'
 filter='false'
+Filter='false'
 backup='false'
 new='false'
 
-while getopts 'a:d:pfbnh' opt; do
+while getopts 'a:d:pfFbnh' opt; do
   case "${opt}" in
     a) alias_file="$OPTARG" ;;
     d) max_age="$OPTARG" ;;
     p) purge='true' ;;
     f) filter='true' ;;
+    F) Filter='true' ;;
     b) backup='true' ;;
     n) new='true' ;;
     *) usage; exit 1 ;;
@@ -82,7 +85,7 @@ touch "${alias_file_new}"
 
 email_regexp="[[:alnum:]._%+-]+\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}"
 
-if [ "$purge" = true ]; then
+if [ $purge = 'true' ]; then
   alias_regexp="^alias ([[:alnum:]._%+-]+) .* <\1\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}> # mutt-alias: e-mail sent on [[:digit:]]+"
   sed -Ei "/${alias_regexp}/d" "${alias_file}"
 fi
@@ -148,8 +151,9 @@ if perl -e 'use Encode::MIME::Header;' > /dev/null 2>&1; then
   mv "${alias_file_new}.decoded" "${alias_file_new}"
 fi
 
-if [ "$filter" = "true" ]; then
-  filter_regexp="<([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|nicht-?antworten|ne-?pas-?repondre|not?([-_.])?reply|\b(un)?subscribe\b|\bMAILER\-DAEMON\b)[[:alnum:]._%+-]*\@([[:alnum:]-]+\.)+[[:alpha:]]{2,})> # mutt-alias: e-mail sent on"
+filter_regexp="\b([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|nicht-?antworten|ne-?pas-?repondre|not?[-_.]?reply|\b(un)?subscribe\b|\bMAILER\-DAEMON\b)[[:alnum:]._%+-]*\@([[:alnum:]-]+\.)+[[:alpha:]]{2,})\b"
+
+if [ $filter = 'true' ]; then
   grep -Eiv \
     "$filter_regexp" \
     "${alias_file_new}" > "${alias_file_new}.filtered"
@@ -160,6 +164,14 @@ fi
 # append new entries to the alias file
 cat "${alias_file_new}" >> ${alias_file}
 rm "${alias_file_new}"
+
+if [ $Filter = 'true' ]; then
+  grep -Eiv \
+    "$filter_regexp" \
+    "${alias_file}" > "${alias_file}.filtered"
+
+  mv "${alias_file}.filtered" "${alias_file}"
+fi
 
 # override alias file by temporary copy of alias file
 mv "${alias_file}" "${alias_file_orig}"
