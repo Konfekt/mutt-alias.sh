@@ -32,6 +32,8 @@ To decode [7-bit ASCII encoded full names that contain non-ASCII letters](https:
 
 # Related
 
+The [aliases-gen.sh](https://github.com/vimpostor/dotfiles/blob/master/scripts/aliases-gen.sh) script by @vimpostor parses all addresses from a mail folder and adds them as aliases but [is based on the notmuch-indexer, which is much superior because it avoids doing low-level mail parsing in Bash](https://github.com/vimpostor/dotfiles/commit/449f7aaa61fc8caf796976567640868e247fcfce#commitcomment-132976373).
+
 The [vim-mutt-aliases](https://github.com/Konfekt/vim-mutt-aliases) plug-in lets you complete e-mail addresses in Vim by those in your `mutt` alias file.
 
 The [auto_add_alias.sh](http://wcaleb.org/blog/mutt-tips) shell script adds an alias via `$display_fiter` for every opened e-mail (and is expanded on in [mutt-alias-auto-add](https://github.com/teddywing/mutt-alias-auto-add)).
