@@ -1,4 +1,16 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
+# exit on error or use of undeclared variable or pipe error:
+set -o errtrace -o errexit -o nounset -o pipefail
+# optionally debug output by supplying TRACE=1
+[[ "${TRACE:-0}" == "1" ]] && set -o xtrace
+
+shopt -s inherit_errexit
+IFS=$'\n\t'
+PS4='+\t '
+
+error_handler() { echo "Error: In ${BASH_SOURCE[0]} Line ${1} exited with Status ${2}"; }
+trap 'error_handler ${LINENO} $?' ERR
 
 # Define usage
 usage() {
@@ -129,12 +141,12 @@ for directory in "$@"; do
 
       if [[ "$out_to" =~ ^${email_regexp}$ ]]; then
         # Find previous entry
-        grep -F -i -q "${out_to}" "${alias_file}" "${alias_file_new}"
-        grep_ret=$?
-        if { [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; } && [ "${grep_ret}" != "0" ]; then
-          hr_out_date="$( date --date=@"$out_date" +%Y-%m-%d@%H:%M:%S )"
-          new_entry="alias ${alias_to} $name_to <${out_to}> # mutt-alias: e-mail sent on ${hr_out_date}"
-          echo "${new_entry}" >> "${alias_file_new}"
+        if grep -F -i -q "${out_to}" "${alias_file}" "${alias_file_new}"; then
+          if { [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; } then
+            hr_out_date="$( date --date=@"$out_date" +%Y-%m-%d@%H:%M:%S )"
+            new_entry="alias ${alias_to} $name_to <${out_to}> # mutt-alias: e-mail sent on ${hr_out_date}"
+            echo "${new_entry}" >> "${alias_file_new}"
+          fi
         fi
       fi
     done
@@ -162,7 +174,7 @@ if [ $filter = 'true' ]; then
 fi
 
 # append new entries to the alias file
-cat "${alias_file_new}" >> ${alias_file}
+cat "${alias_file_new}" >> "${alias_file}"
 rm "${alias_file_new}"
 
 if [ $Filter = 'true' ]; then
