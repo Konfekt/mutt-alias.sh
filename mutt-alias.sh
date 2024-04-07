@@ -9,8 +9,13 @@ shopt -s inherit_errexit
 IFS=$'\n\t'
 PS4='+\t '
 
-error_handler() { echo "Error: In ${BASH_SOURCE[0]} Line ${1} exited with Status ${2}"; }
-trap 'error_handler ${LINENO} $?' ERR
+error_handler() {
+  echo >&2 "Error: In ${BASH_SOURCE[0]}, Lines $1 and $2, Command $3 exited with Status $4"
+  pr -tn "${BASH_SOURCE[0]}" |
+    tail -n+$(($1 - 3)) | head -n7 | sed '4s/^\s*/>>> /' >&2
+  exit "$4"
+}
+trap 'error_handler $LINENO "$BASH_LINENO" "$BASH_COMMAND" $?' ERR
 
 # Define usage
 usage() {
