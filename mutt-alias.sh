@@ -146,7 +146,7 @@ for directory in "$@"; do
 
       if [[ "$out_to" =~ ^${email_regexp}$ ]]; then
         # Find previous entry
-        if grep -F -i -q "${out_to}" "${alias_file}" "${alias_file_new}"; then
+        if ! grep -F -i -q "${out_to}" "${alias_file}" "${alias_file_new}"; then
           if { [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; } then
             hr_out_date="$( date --date=@"$out_date" +%Y-%m-%d@%H:%M:%S )"
             new_entry="alias ${alias_to} $name_to <${out_to}> # mutt-alias: e-mail sent on ${hr_out_date}"
