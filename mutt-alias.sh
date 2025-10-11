@@ -1,26 +1,167 @@
 #!/usr/bin/env bash
 
-# exit on error or use of undeclared variable or pipe error:
+# Exit on error or use of undeclared variable or pipe error.
 set -o errtrace -o errexit -o nounset -o pipefail
-# optionally debug output by supplying TRACE=1
 [[ "${TRACE:-0}" == "1" ]] && set -o xtrace
 
-shopt -s inherit_errexit
+# Try to inherit ERR in functions; do not abort if unsupported.
+shopt -s inherit_errexit 2>/dev/null || true
+
 IFS=$'\n\t'
 PS4='+\t '
 
+# Error trap with context preview.
 error_handler() {
-  echo >&2 "Error: In ${BASH_SOURCE[0]}, Lines $1 and $2, Command $3 exited with Status $4"
-  pr -tn "${BASH_SOURCE[0]}" |
-    tail -n+$(($1 - 3)) | head -n7 | sed '4s/^\s*/>>> /' >&2
-  exit "$4"
+  local line="$1" callstack="$2" cmd="$3" status="$4"
+  echo >&2 "Error: In ${BASH_SOURCE[0]}, Lines ${line} and ${callstack}, Command ${cmd} exited with Status ${status}"
+  local start=$(( line - 3 ))
+  if (( start < 1 )); then start=1; fi
+  pr -tn "${BASH_SOURCE[0]}" | tail -n +"${start}" | head -n 7 | sed '4s/^[[:space:]]*/>>> /' >&2
+  exit "$status"
 }
 trap 'error_handler $LINENO "$BASH_LINENO" "$BASH_COMMAND" $?' ERR
 
-# Define usage
+###############################################################################
+# Compatibility helpers and dependency checks.
+###############################################################################
+
+# Bash version and feature detection.
+BASH_MAJOR=${BASH_VERSINFO[0]:-3}
+if (( BASH_MAJOR < 4 )); then
+  echo "Warning: Bash >= 4 is needed for best performance (associative arrays, case mods). Falling back to slower methods." >&2
+fi
+
+# Lowercasing helper compatible with older bash.
+if ((BASH_MAJOR >= 4)); then
+  to_lower() { printf '%s' "${1,,}" ; }
+else
+  to_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' ; }
+fi
+
+###############################################################################
+# Address parsing and sanitation utilities.
+###############################################################################
+
+# Address parsing and sanitation utilities.
+# Split an RFC 5322 address list into one address-spec per line, ignoring commas
+# inside double quotes, angle brackets, or comments (parentheses).
+split_addrlist() {
+  local s="$1"
+  # Keep integer state. Use assignments with $(( ... )) so status is always 0.
+  # This avoids tripping `set -e`/ERR trap on normal falsey results.
+  local -i in_quote=0 in_angle=0 paren_depth=0 esc=0
+  local ch acc=''
+
+  # Read byte-wise to track state deterministically.
+  while IFS= read -r -n1 ch; do
+    # If last char was an escape inside quotes, take this char verbatim.
+    if (( esc )); then
+      acc+="$ch"; esc=0; continue
+    fi
+    case "$ch" in
+      \\)
+        if (( in_quote )); then esc=1; fi
+        acc+="$ch"
+        ;;
+      '"')
+        # Toggle quote state without using (( ... )) as a command.
+        in_quote=$(( in_quote ^ 1 ))
+        acc+="$ch"
+        ;;
+      '<')
+        # Increment angle depth safely.
+        in_angle=$(( in_angle + 1 ))
+        acc+="$ch"
+        ;;
+      '>')
+        # Decrement angle depth safely.
+        if (( in_angle > 0 )); then in_angle=$(( in_angle - 1 )); fi
+        acc+="$ch"
+        ;;
+      '(')
+        # Increment paren depth safely.
+        paren_depth=$(( paren_depth + 1 ))
+        acc+="$ch"
+        ;;
+      ')')
+        # Decrement paren depth safely.
+        if (( paren_depth > 0 )); then paren_depth=$(( paren_depth - 1 )); fi
+        acc+="$ch"
+        ;;
+      ',')
+        # Only split on commas at top-level (not in quotes/angles/paren comments).
+        if (( in_quote==0 && in_angle==0 && paren_depth==0 )); then
+          printf '%s\n' "$acc"
+          acc=''
+        else
+          acc+="$ch"
+        fi
+        ;;
+      $'\r'|$'\n')
+        # Ignore newlines in already-unfolded header text.
+        ;;
+      *)
+        acc+="$ch"
+        ;;
+    esac
+  done < <(printf '%s' "$s")
+
+  if [[ -n "$acc" ]]; then
+    printf '%s\n' "$acc"
+  fi
+}
+
+# Trim leading/trailing whitespace and collapse internal whitespace to single spaces.
+trim_collapse_ws() {
+  sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g'
+}
+
+# Address parsing: extract email and display name from one address-spec.
+# - Prefer angle-bracket form.
+# - Otherwise, extract the first full email token anywhere without partial matches.
+# - Print: email TAB display-name (name may be empty).
+extract_email_and_name() {
+  local spec="$1" email name rx
+  email=$(sed -nE 's/.*<([^>]*)>.*/\1/p' <<< "$spec")
+  if [[ -n "$email" ]]; then
+    name=$(sed 's/<[^>]*>.*$//' <<< "$spec" | trim_collapse_ws)
+    name="${name%\"}"; name="${name#\"}"
+  else
+    # Use the same email regexp as elsewhere, with a local fallback for safety.
+    rx="${email_regexp:-[[:alnum:]._%+-]+@([[:alnum:]-]+\.)+[[:alpha:]]{2,}}"
+    # Extract the first full email match; tolerate no-match under set -e -o pipefail.
+    email=$(grep -Eo "$rx" <<< "$spec" | head -n1 || true)
+    name=""
+  fi
+  printf '%s\t%s\n' "$email" "$name"
+}
+
+# Sanitize alias from local-part: lowercase and replace non-alnum with single hyphens.
+sanitize_alias() {
+  local lp="$1" out
+  out="$(to_lower "$lp")"
+  out=$(sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g' <<< "$out")
+  printf '%s' "$out"
+}
+
+# Normalize display name:
+# - Drop comma in "Last, First" by default (keep order), unless KEEP_COMMA=1.
+# - Collapse whitespace; ensure safe for double-quote wrapping by escaping ".
+normalize_display_name() {
+  local name="$1" out
+  out="$name"
+  if [[ "${KEEP_COMMA:-0}" != "1" ]]; then
+    out=$(sed -E 's/^([^,]+),[[:space:]]*([^,]+)$/\1 \2/' <<< "$out")
+  fi
+  out=$(printf '%s' "$out" | trim_collapse_ws)
+  out="${out//\"/\\\"}"
+  printf '%s' "$out"
+}
+
+# Define usage.
 usage() {
   cat <<EOF
-Usage: $0 [-a alias file] [-d days] [-p] [-f] [-b] [-n] DIRECTORIES
+Usage: $0 [-a alias file] [-d days] [-p] [-f] [-F] [-b] [-n] [-C] DIRECTORIES
 Built mutt aliases from maildir emails in DIRECTORIES.
 OPTIONS:
   -a          alias file (default: value of \$alias_file in ~/.muttrc)
@@ -30,21 +171,22 @@ OPTIONS:
   -F          filter out all email addresses that are probably impersonal
   -b          backup the current alias file (if it exists) to *.prev
   -n          create a new alias file instead of modifying the current one
+  -C          keep commas in display names (default: drop comma in "Last, First")
   -h          display this help and exit
 EOF
   exit 1
 }
 
-# Parse options
-
+# Parse options.
 max_age=0
 purge='false'
 filter='false'
 Filter='false'
 backup='false'
 new='false'
+KEEP_COMMA=0
 
-while getopts 'a:d:pfFbnh' opt; do
+while getopts 'a:d:pfFbnhC' opt; do
   case "${opt}" in
     a) alias_file="$OPTARG" ;;
     d) max_age="$OPTARG" ;;
@@ -53,149 +195,215 @@ while getopts 'a:d:pfFbnh' opt; do
     F) Filter='true' ;;
     b) backup='true' ;;
     n) new='true' ;;
-    *) usage; exit 1 ;;
+    C) KEEP_COMMA=1 ;;
+    h) usage ;;
+    *) usage ;;
   esac
 done
 shift $((OPTIND-1))
 
-if [ $# = 0 ]; then usage; fi
+[ $# -eq 0 ] && usage
 
-if [ -z "$alias_file" ]; then
+# Resolve alias file if not provided (guard against nounset).
+if [ -z "${alias_file:-}" ]; then
   if command -v mutt >/dev/null 2>&1; then
-    alias_file="$(mutt -Q "alias_file")"
+    alias_file="$(mutt -Q alias_file 2>/dev/null | sed -nE 's/^alias_file\s*=\s*//p')"
+  elif command -v neomutt >/dev/null 2>&1; then
+    alias_file="$(neomutt -Q alias_file 2>/dev/null | sed -nE 's/^alias_file\s*=\s*//p')"
   elif [ -f "$HOME/.muttrc" ]; then
-    alias_file=$(grep -E --only-matching --no-filename '^\s*set\s+alias_file\s*=.*$' "$HOME/.muttrc")
+    alias_file="$(sed -nE 's/^\s*set\s+alias_file\s*=\s*//p' "$HOME/.muttrc" | head -n1)"
+  else
+    alias_file=""
   fi
-  alias_file=$(echo "${alias_file}" | grep -E --only-matching '[^=]+$' -)
 fi
-alias_file=$(eval echo "${alias_file}")
-alias_file="${alias_file/\~/$HOME}"
+alias_file="${alias_file%\"}"
+alias_file="${alias_file#\"}"
+case "${alias_file:-}" in
+  "~") alias_file="$HOME" ;;
+  "~/"*) alias_file="$HOME/${alias_file#~/}" ;;
+esac
 
-if ! [ -f "$alias_file" ]; then
-  echo "No alias file found. Exiting!"
-  exit 1
+# Allow creation when -n is set; otherwise require existing file.
+if ! [ -f "${alias_file:-}" ]; then
+  if [ "$new" = 'true' ] && [ -n "${alias_file:-}" ]; then
+    mkdir -p -- "$(dirname -- "$alias_file")"
+    : > "$alias_file"
+  else
+    echo "No alias file found. Exiting!"
+    exit 1
+  fi
 fi
 
-# Make backup and/or clear previous database
+# Make backup and/or clear previous database.
 alias_file_prev="${alias_file}.prev"
 if [ -f "${alias_file}" ]; then
-  if [ $backup = 'true' ] && [ $new = 'true' ]; then
+  if [ "$backup" = 'true' ] && [ "$new" = 'true' ]; then
     mv "${alias_file}" "${alias_file_prev}"
-  elif [ $backup = 'true' ] && [ $new = 'false' ]; then
+  elif [ "$backup" = 'true' ] && [ "$new" = 'false' ]; then
     cp "${alias_file}" "${alias_file_prev}"
-  elif [ $backup = 'false' ] && [ $new = 'true' ]; then
+  elif [ "$backup" = 'false' ] && [ "$new" = 'true' ]; then
     rm "${alias_file}"
   fi
 fi
 
 touch "$alias_file"
-echo Using "${alias_file}" to store aliases...
+echo "Using ${alias_file} to store aliases..."
 
-# make temporary copy of alias file
+# Make temporary copy of alias file.
 alias_file_orig="${alias_file}"
 TMPDIR=${TMPDIR:-/tmp}
-tmp_dir=$(mktemp --directory "$TMPDIR/mutt-alias.XXXXXXXXXX")
-alias_file="${tmp_dir}"/aliases
-alias_file_new="${tmp_dir}"/aliases.new
+tmp_dir=$(mktemp -d "$TMPDIR/mutt-alias.XXXXXXXXXX")
+cleanup_tmp() { rm -rf -- "${tmp_dir}"; }
+trap 'cleanup_tmp' EXIT
+alias_file="${tmp_dir}/aliases"
+alias_file_new="${tmp_dir}/aliases.new"
 cp "${alias_file_orig}" "${alias_file}"
-touch "${alias_file_new}"
+: > "${alias_file_new}"
 
 email_regexp="[[:alnum:]._%+-]+\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}"
 
-if [ $purge = 'true' ]; then
-  alias_regexp="^alias ([[:alnum:]._%+-]+) .* <\1\@([[:alnum:]-]+\.)+[[:alpha:]]{2,}> # mutt-alias: e-mail sent on [[:digit:]]+"
-  sed -Ei "/${alias_regexp}/d" "${alias_file}"
+if [ "$purge" = 'true' ]; then
+  # Purge lines previously added by this tool, regardless of alias/local-part relation.
+  tmp_purge="${tmp_dir}/aliases.purged"
+  if ! grep -Eiv '^alias [^#]*# mutt-alias: e-mail sent on ' "${alias_file}" > "${tmp_purge}"; then
+    : > "${tmp_purge}"
+  fi
+  mv "${tmp_purge}" "${alias_file}"
 fi
 
+# Preload seen email addresses from existing alias file to avoid repeated greps.
+if (( BASH_MAJOR >= 4 )); then
+  # requires associative arrays
+  declare -A SEEN_EMAILS
+  while IFS= read -r _addr; do
+    [[ -n "$_addr" ]] || continue
+    _addr="$(to_lower "$_addr")"
+    SEEN_EMAILS["$_addr"]=1
+  done < <(sed -nE 's/.*<([^>]+)>.*/\1/p' "${alias_file}")
+else
+  seen_emails_file="${tmp_dir}/seen_emails"
+  : > "$seen_emails_file"
+  sed -nE 's/.*<([^>]+)>.*/\1/p' "${alias_file}" | while IFS= read -r _addr; do
+  printf '%s\n' "$(to_lower "$_addr")"
+done >> "$seen_emails_file"
+fi
+
+NOW=$(date +%s)
 old_IFS=$IFS
 for directory in "$@"; do
-  # Restore IFS
+  # Restore IFS during loop body.
   IFS=${old_IFS}
   echo "Processing ${directory}"
   if [ "${max_age}" = "0" ]; then
-      emails="${directory}"/*
+    emails="$(find "${directory}" -type f -print)"
   else
-      emails="$(find "${directory}" -type f -mtime "-${max_age}")"
+    emails="$(find "${directory}" -type f -mtime "-${max_age}" -print)"
   fi
 
+  [ -n "$emails" ] || continue
   for email in $emails; do
-    # Parse "To:"
+    # Parse "To:" (unfolded).
     in_to="$(awk 'BEGIN {found="no"}; ((found=="yes") && /^\S/) || /^$/ {exit}; (found=="yes") && /^\s/ { printf "%s", $0 }; /^To:/ {found="yes"; sub(/^To: ?/, "", $0) ; printf "%s", $0}' "$email")"
 
-    # Parse "Date:"
+    # Parse "Date:" and convert to epoch (0 if missing or unparsable).
     in_date="$(awk 'BEGIN {found="no"}; ((found=="yes") && /^\S/) || /^$/ {exit}; (found=="yes") && /^\s/ { printf "%s", $0 }; /^Date:/ {found="yes"; sub(/^Date: ?/, "", $0) ; printf "%s", $0}' "$email")"
-    out_date="$( date --date="$in_date" +%s )"
-    # If there is no date, then just put an early date in.
-    if [ "${out_date}" = "" ]; then out_date="0"; fi
+    out_date="$( date --date="$in_date" +%s 2>/dev/null || echo 0 )"
+    [ -z "${out_date}" ] && out_date="0"
 
-    # Split To: on `,` for multiple recipients
-    IFS=','
-    for each_to in $in_to; do
-      # first delete white space (possibly leading space from `, `),
-      # then remove real name (if present),
-      # then make lower-case
-      out_to="$( <<<"$each_to" tr -d '[:space:]' | sed -E 's/.*<(.*)>/\1/' )"
-      out_to=$(echo "$out_to" | tr "[:upper:]" "[:lower:]")
-      # get real name
-      name_to="$( <<<"$each_to" sed -E 's/(.*)<.*>/\1/' )"
-      # get alias by removing domain
-      alias_to=${out_to%@*}
+    epoch=0
+    if [[ -n "$in_date" ]]; then
+      epoch=$(date -ud "$in_date" +%s 2>/dev/null || echo 0)
+    fi
+    if [[ "$max_age" != "0" && $epoch -gt 0 ]]; then
+      out_age=$(( (NOW - epoch) / 86400 ))
+    fi
+    if (( epoch > 0 )); then
+      hr_out_date=$(date -ud "@$epoch" +%Y-%m-%d@%H:%M:%S)
+    else
+      hr_out_date="$in_date"
+    fi
 
-      now=$(date +%s)
-      out_age=$(( (now - out_date) / 86400 ))
+    # Robustly split To: into address-specs using a state machine.
+    [ -n "$in_to" ] || continue
+    while IFS= read -r each_to; do
+      # Extract email and display name.
+      IFS=$'\t' read -r out_to name_to <<<"$(extract_email_and_name "$each_to")"
+
+      # Skip if no valid email.
+      if [[ -z "$out_to" ]]; then
+        continue
+      fi
+
+      # Normalize case of email (mutt treats addresses case-insensitively).
+      out_to="$(to_lower "$out_to")"
+
+      # Derive and sanitize alias from the local-part.
+      alias_to="$(sanitize_alias "${out_to%@*}")"
+
+      # Normalize display name policy.
+      name_to="$(normalize_display_name "$name_to")"
 
       if [[ "$out_to" =~ ^${email_regexp}$ ]]; then
-        # Find previous entry
-        if ! grep -F -i -q "${out_to}" "${alias_file}" "${alias_file_new}"; then
-          if { [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; } then
-            hr_out_date="$( date --date=@"$out_date" +%Y-%m-%d@%H:%M:%S )"
-            new_entry="alias ${alias_to} \"$name_to\" <${out_to}> # mutt-alias: e-mail sent on ${hr_out_date}"
+        # Avoid duplicates across original and new files.
+        if [[ -z "${SEEN_EMAILS[$out_to]:-}" ]]; then
+          if { [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; }; then
+            new_entry="alias ${alias_to} \"${name_to}\" <${out_to}> # mutt-alias: e-mail sent on ${hr_out_date}"
             echo "${new_entry}" >> "${alias_file_new}"
+            SEEN_EMAILS["$out_to"]=1
           fi
         fi
       fi
-    done
-    IFS=" "
+    done < <(split_addrlist "$in_to")
   done
 done
 
-# Restore IFS
+# Restore IFS.
 IFS=${old_IFS}
 
+# Decode MIME-encoded names if Perl Encode::MIME::Header is available.
 if perl -e 'use Encode::MIME::Header;' > /dev/null 2>&1; then
   perl -CS -MEncode -ne 'print decode("MIME-Header", $_)' \
     "${alias_file_new}" > "${alias_file_new}.decoded"
   mv "${alias_file_new}.decoded" "${alias_file_new}"
+else
+  echo "Note: Perl module Encode::MIME::Header not available; display names may remain MIME-encoded." >&2
 fi
 
-filter_regexp="\b([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|nicht-?antworten|ne-?pas-?repondre|not?[-_.]?reply|\b(un)?subscribe\b|\bMAILER\-DAEMON\b)[[:alnum:]._%+-]*\@([[:alnum:]-]+\.)+[[:alpha:]]{2,})\b"
+# ERE-compatible approximation of word-boundary for email-like tokens.
+# This avoids GNU grep -P.
+begin_ere='(^|[^[:alnum:]._%+-])'
+end_ere='($|[^[:alnum:]._%+-])'
+middle_ere='([[:alnum:]._%+-]*([0-9]{9,}|([0-9]+[a-z]+){3,}|\+|nicht-?antworten|ne-?pas-?repondre|not?[-_.]?reply|(un)?subscribe|MAILER-DAEMON)[[:alnum:]._%+-]*@([[:alnum:]-]+\.)+[[:alpha:]]{2,})'
+filter_regexp="${begin_ere}${middle_ere}${end_ere}"
 
-if [ $filter = 'true' ]; then
-  grep -Eiv \
-    "$filter_regexp" \
-    "${alias_file_new}" > "${alias_file_new}.filtered"
-
+if [ "$filter" = 'true' ]; then
+  if ! grep -Eiv -- "$filter_regexp" "${alias_file_new}" > "${alias_file_new}.filtered"; then
+    : > "${alias_file_new}.filtered"
+  fi
   mv "${alias_file_new}.filtered" "${alias_file_new}"
 fi
 
-# append new entries to the alias file
+# Append new entries to the alias file.
 cat "${alias_file_new}" >> "${alias_file}"
-rm "${alias_file_new}"
+rm -f "${alias_file_new}"
 
-if [ $Filter = 'true' ]; then
-  grep -Eiv \
-    "$filter_regexp" \
-    "${alias_file}" > "${alias_file}.filtered"
-
+if [ "$Filter" = 'true' ]; then
+  if ! grep -Eiv -- "$filter_regexp" "${alias_file}" > "${alias_file}.filtered"; then
+    : > "${alias_file}.filtered"
+  fi
   mv "${alias_file}.filtered" "${alias_file}"
 fi
 
-# override alias file by temporary copy of alias file
+# Override alias file by temporary copy of alias file.
 mv "${alias_file}" "${alias_file_orig}"
-rmdir "${tmp_dir}"
 
-# Return time it took to run, removing leading zeros
-TOTALTIME=$(date --date="1970-01-01 ${SECONDS} sec" +'%T' | sed -E 's/^0(0:(0)?)?//')
+# Return time it took to run, removing leading zeros.
+format_duration() {
+  local s="$1"
+  local h=$(( s / 3600 ))
+  local m=$(( (s % 3600) / 60 ))
+  local sec=$(( s % 60 ))
+  printf '%02d:%02d:%02d' "$h" "$m" "$sec"
+}
+TOTALTIME=$(format_duration "$SECONDS" | sed -E 's/^0(0:(0)?)?//')
 echo "Database updated in ${TOTALTIME}."
-
-# ex:ft=sh
