@@ -111,6 +111,65 @@ split_addrlist() {
   fi
 }
 
+# ASCII transliteration (folding) for human names.
+# - Prefer iconv(1) with //TRANSLIT (widely available).
+# - Fallback to Python 3 NFKD decomposition, then Perl, then lossy ASCII strip.
+# - Always return a string; never propagate an error (avoid tripping -e).
+ascii_fold() {
+  local s="$1" out rc=0
+  if command -v iconv >/dev/null 2>&1; then
+    # iconv transliteration (glibc/libiconv): e.g., Ä->Ae, Ö->Oe, ß->ss.
+    out="$(printf '%s' "$s" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || true)"
+    if [[ -n "$out" ]]; then
+      printf '%s' "$out"
+      return 0
+    fi
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$s" <<'PY' || rc=$?
+import sys, unicodedata
+s = sys.argv[1]
+print(unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii'), end='')
+PY
+    if (( rc == 0 )); then return 0; fi
+  fi
+  if command -v perl >/dev/null 2>&1; then
+    perl -MUnicode::Normalize -CS -e '$_=shift; $_=NFKD($_); s/\pM+//g; print' -- "$s" && return 0 || true
+  fi
+  # Last-resort: drop non-ASCII.
+  LC_ALL=C printf '%s' "$s" | sed 's/[^[:print:]\t ]//g'
+}
+
+###############################################################################
+# RFC 2047 "encoded-words" decoder for display names.
+# - Prefer Python 3 email.header (stdlib, robust).
+# - Fallback to Perl Encode::MIME::Header.
+# - Always succeed; never trip -e/-o pipefail.
+###############################################################################
+decode_mime_header() {
+  local s="$1" out rc=0
+  # Fast return on empty
+  [[ -n "$s" ]] || { printf '%s' "$s"; return 0; }
+  if command -v python3 >/dev/null 2>&1; then
+    out="$(python3 - "$s" <<'PY' || rc=$?
+import sys
+from email.header import decode_header, make_header
+s = sys.argv[1]
+try:
+    print(str(make_header(decode_header(s))), end='')
+except Exception:
+    print(s, end='')
+PY
+)"
+    if (( rc == 0 )); then printf '%s' "$out"; return 0; fi
+  fi
+  if perl -e 'use Encode::MIME::Header;' >/dev/null 2>&1; then
+    perl -CS -MEncode -e 'binmode STDOUT, ":encoding(UTF-8)"; $_=shift; print decode("MIME-Header", $_)' -- "$s" 2>/dev/null || true
+    return 0
+  fi
+  printf '%s' "$s"
+}
+
 # Trim leading/trailing whitespace and collapse internal whitespace to single spaces.
 trim_collapse_ws() {
   sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g'
@@ -136,11 +195,35 @@ extract_email_and_name() {
   printf '%s\t%s\n' "$email" "$name"
 }
 
-# Sanitize alias from local-part: lowercase and replace non-alnum with single hyphens.
+# Sanitize alias from local-part:
+# Keep locale alphanumerics (incl. umlauts/accents); collapse everything else to hyphens.
 sanitize_alias() {
   local lp="$1" out
   out="$(to_lower "$lp")"
-  out=$(sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g' <<< "$out")
+  out=$(sed -E 's/[^[:alnum:]]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g' <<< "$out")
+  printf '%s' "$out"
+}
+
+# Build alias from display name:
+# - Collapse whitespace and lowercase.
+# - Reorder "Last, First" to "First Last" for alias generation.
+# - Replace spaces with hyphens.
+# - Keep locale alphanumerics (incl. umlauts/accents); collapse other chars to hyphens.
+# - Collapse duplicate separators and trim edges.
+alias_from_display_name() {
+  local name="$1" out
+  # Normalize spacing first to ensure only plain spaces remain.
+  out="$(printf '%s' "$name" | trim_collapse_ws)"
+  # Reorder "Last, First" => "First Last" (only affects alias generation).
+  if [[ "$out" =~ ^([^,]+),[[:space:]]*([^,]+)$ ]]; then
+    out="${BASH_REMATCH[2]} ${BASH_REMATCH[1]}"
+  fi
+  # Fold to ASCII before lowercasing to match requested behavior (e.g., "Jürgen" -> "jurgen").
+  out="$(ascii_fold "$out")"
+  out="$(to_lower "$out")"
+  # Spaces to hyphens, then collapse non-alnum (from current locale) to hyphens.
+  out="${out// /-}"
+  out="$(sed -E 's/[^[:alnum:]-]+/-/g; s/-+/-/g; s/^-+//; s/-+$//' <<< "$out")"
   printf '%s' "$out"
 }
 
@@ -271,21 +354,33 @@ if [ "$purge" = 'true' ]; then
   mv "${tmp_purge}" "${alias_file}"
 fi
 
-# Preload seen email addresses from existing alias file to avoid repeated greps.
+# Preload seen email addresses from existing alias file to avoid duplicates.
 if (( BASH_MAJOR >= 4 )); then
-  # requires associative arrays
+  # Associative-array path (Bash >= 4).
   declare -A SEEN_EMAILS
   while IFS= read -r _addr; do
     [[ -n "$_addr" ]] || continue
     _addr="$(to_lower "$_addr")"
     SEEN_EMAILS["$_addr"]=1
   done < <(sed -nE 's/.*<([^>]+)>.*/\1/p' "${alias_file}")
+  seen_has() { local a; a="$(to_lower "$1")"; [[ -n "${SEEN_EMAILS[$a]:-}" ]]; }
+  seen_add() { local a; a="$(to_lower "$1")"; SEEN_EMAILS["$a"]=1; }
 else
+  # File-backed path (Bash 3.x).
   seen_emails_file="${tmp_dir}/seen_emails"
   : > "$seen_emails_file"
   sed -nE 's/.*<([^>]+)>.*/\1/p' "${alias_file}" | while IFS= read -r _addr; do
-  printf '%s\n' "$(to_lower "$_addr")"
-done >> "$seen_emails_file"
+    printf '%s\n' "$(to_lower "$_addr")"
+  done >> "$seen_emails_file"
+  seen_has() {
+    local a; a="$(to_lower "$1")"
+    # Return 0 if found, 1 otherwise.
+    grep -Fqx -- "$a" "$seen_emails_file" >/dev/null 2>&1
+  }
+  seen_add() {
+    local a; a="$(to_lower "$1")"
+    printf '%s\n' "$a" >> "$seen_emails_file"
+  }
 fi
 
 NOW=$(date +%s)
@@ -326,30 +421,44 @@ for directory in "$@"; do
     # Robustly split To: into address-specs using a state machine.
     [ -n "$in_to" ] || continue
     while IFS= read -r each_to; do
-      # Extract email and display name.
-      IFS=$'\t' read -r out_to name_to <<<"$(extract_email_and_name "$each_to")"
+      # Extract email and display name (raw, unescaped for alias derivation).
+      IFS=$'\t' read -r out_to name_raw <<<"$(extract_email_and_name "$each_to")"
 
       # Skip if no valid email.
       if [[ -z "$out_to" ]]; then
         continue
       fi
 
+      # Decode RFC 2047-encoded display names before alias generation.
+      name_raw="$(decode_mime_header "$name_raw")"
+
       # Normalize case of email (mutt treats addresses case-insensitively).
       out_to="$(to_lower "$out_to")"
 
-      # Derive and sanitize alias from the local-part.
-      alias_to="$(sanitize_alias "${out_to%@*}")"
+      # - If display name is present, build alias from it.
+      # - Otherwise, use full local-part.
+      if [[ -n "$name_raw" ]]; then
+        alias_to="$(alias_from_display_name "$name_raw")"
+      else
+        alias_to="$(sanitize_alias "${out_to%@*}")"
+      fi
+      # Fallback to local-part if the result is empty after sanitization.
+      if [[ -z "$alias_to" ]]; then
+        alias_to="$(sanitize_alias "${out_to%@*}")"
+      fi
 
-      # Normalize display name policy.
-      name_to="$(normalize_display_name "$name_to")"
+      # Normalize decoded display name for storage (escaping, commas policy).
+      name_to="$(normalize_display_name "$name_raw")"
 
       if [[ "$out_to" =~ ^${email_regexp}$ ]]; then
-        # Avoid duplicates across original and new files.
-        if [[ -z "${SEEN_EMAILS[$out_to]:-}" ]]; then
-          if { [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; }; then
+        # Default unknown age to 0 to avoid arithmetic errors under -e.
+        out_age=${out_age:-0}
+        # Apply age filter first, then duplicate filter.
+        if [ "0" = "$max_age" ] || [ "$out_age" -lt "$max_age" ]; then
+          if ! seen_has "$out_to"; then
             new_entry="alias ${alias_to} \"${name_to}\" <${out_to}> # mutt-alias: e-mail sent on ${hr_out_date}"
             echo "${new_entry}" >> "${alias_file_new}"
-            SEEN_EMAILS["$out_to"]=1
+            seen_add "$out_to"
           fi
         fi
       fi
@@ -359,15 +468,6 @@ done
 
 # Restore IFS.
 IFS=${old_IFS}
-
-# Decode MIME-encoded names if Perl Encode::MIME::Header is available.
-if perl -e 'use Encode::MIME::Header;' > /dev/null 2>&1; then
-  perl -CS -MEncode -ne 'print decode("MIME-Header", $_)' \
-    "${alias_file_new}" > "${alias_file_new}.decoded"
-  mv "${alias_file_new}.decoded" "${alias_file_new}"
-else
-  echo "Note: Perl module Encode::MIME::Header not available; display names may remain MIME-encoded." >&2
-fi
 
 # ERE-compatible approximation of word-boundary for email-like tokens.
 # This avoids GNU grep -P.
