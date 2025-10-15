@@ -170,6 +170,91 @@ PY
   printf '%s' "$s"
 }
 
+# Cache only on Bash >= 4. No disk I/O fallback to avoid overhead on Bash 3.
+if (( BASH_MAJOR >= 4 )); then
+  declare -gA MOJI_CACHE=()
+  # Entire-section comment:
+  # - Quote associative-array subscripts to allow empty and whitespace keys.
+  # - Treat empty key as a cache miss to avoid creating "" entries.
+  moji_cache_get() {
+    local k="${1-}"
+    [[ -n "$k" ]] || return 1
+    [[ -n "${MOJI_CACHE["$k"]+x}" ]] && { printf '%s' "${MOJI_CACHE["$k"]}"; return 0; }
+    return 1
+  }
+  moji_cache_put() {
+    local k="${1-}" v="${2-}"
+    [[ -n "$k" ]] || return 0
+    MOJI_CACHE["$k"]="$v"
+  }
+else
+  moji_cache_get() { return 1; }
+  moji_cache_put() { :; }
+fi
+
+MOJIBAKE_MODE="on"
+maybe_fix_mojibake() {
+  local s="$1" out rc=0
+  [[ "${MOJIBAKE_MODE}" == "off" ]] && { printf '%s' "$s"; return 0; }
+  [[ -z "$s" ]] && { printf '%s' "$s"; return 0; }
+
+  # Cache hit short circuit.
+  if moji_cache_get "$s" >/dev/null; then moji_cache_get "$s"; return 0; fi
+
+  # Cheap gate to avoid work on normal text.
+  if [[ ! "$s" =~ [ÃÂâ] ]]; then
+    moji_cache_put "$s" "$s"
+    printf '%s' "$s"
+    return 0
+  fi
+  # Fast path: reinterpret as CP1252 or Latin-1 using iconv first.
+  # Perform: UTF-8 -> legacy -> UTF-8 (round-trip to fix mojibake).
+  for enc in WINDOWS-1252 ISO-8859-1; do
+    out="$(printf '%s' "$s" \
+      | iconv -f UTF-8 -t "$enc" 2>/dev/null \
+      | iconv -f "$enc" -t UTF-8 2>/dev/null || true)"
+    if [[ -n "$out" && "$out" != "$s" ]]; then
+      moji_cache_put "$s" "$out"
+      printf '%s' "$out"
+      return 0
+    fi
+  done
+
+  # Optional high-quality fallback using Python only in "full" mode.
+  if [[ "${MOJIBAKE_MODE}" == "full" ]] && command -v python3 >/dev/null 2>&1; then
+    out="$(python3 - "$s" <<'PY' || rc=$?
+import sys, re
+s = sys.argv[1]
+cands = [s]
+for enc in ('latin1', 'cp1252'):
+    try:
+        t = s.encode(enc).decode('utf-8')
+        if t not in cands:
+            cands.append(t)
+    except Exception:
+        pass
+def score(u):
+    pen = 0
+    pen += u.count('\ufffd') * 10
+    pen += len(re.findall(r'[ÂÃ]', u)) * 3
+    pen += len(re.findall(r'â[€™“”•’—–‹›¢£¤¦§©«»°±²³µ¶·¸¹º¼½¾]', u)) * 2
+    bonus = len(re.findall(r'[ÄÖÜäöüßáéíóúàèìòùâêîôûñçœæåø]', u))
+    return pen - bonus
+best = min(cands, key=score)
+sys.stdout.write(best)
+PY
+)"
+    if (( rc == 0 )) && [[ -n "$out" ]]; then
+      moji_cache_put "$s" "$out"
+      printf '%s' "$out"
+      return 0
+    fi
+  fi
+
+  moji_cache_put "$s" "$s"
+  printf '%s' "$s"
+}
+
 # Trim leading/trailing whitespace and collapse internal whitespace to single spaces.
 trim_collapse_ws() {
   sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g'
@@ -354,6 +439,7 @@ if [ "$purge" = 'true' ]; then
   mv "${tmp_purge}" "${alias_file}"
 fi
 
+
 # Preload seen email addresses from existing alias file to avoid duplicates.
 if (( BASH_MAJOR >= 4 )); then
   # Associative-array path (Bash >= 4).
@@ -431,6 +517,7 @@ for directory in "$@"; do
 
       # Decode RFC 2047-encoded display names before alias generation.
       name_raw="$(decode_mime_header "$name_raw")"
+      name_raw="$(maybe_fix_mojibake "$name_raw")"
 
       # Normalize case of email (mutt treats addresses case-insensitively).
       out_to="$(to_lower "$out_to")"
