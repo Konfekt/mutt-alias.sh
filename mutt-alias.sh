@@ -290,38 +290,64 @@ sanitize_alias() {
 }
 
 # Build alias from display name:
-# - Collapse whitespace and lowercase.
-# - Reorder "Last, First" to "First Last" for alias generation.
-# - Replace spaces with hyphens.
-# - Keep locale alphanumerics (incl. umlauts/accents); collapse other chars to hyphens.
+# - Reorder "Last, First Middle" => "First Middle Last" for derivation only.
+# - Fold to ASCII, lowercase.
+# - Use only first and last tokens for the alias: "first-last".
+# - Preserve hyphens within tokens; drop other punctuation.
 # - Collapse duplicate separators and trim edges.
 alias_from_display_name() {
-  local name="$1" out
-  # Normalize spacing first to ensure only plain spaces remain.
-  out="$(printf '%s' "$name" | trim_collapse_ws)"
-  # Reorder "Last, First" => "First Last" (only affects alias generation).
-  if [[ "$out" =~ ^([^,]+),[[:space:]]*([^,]+)$ ]]; then
-    out="${BASH_REMATCH[2]} ${BASH_REMATCH[1]}"
+  local name="$1" norm out first last
+  local -a tokens=()
+
+  # Normalize spacing first.
+  norm="$(printf '%s' "$name" | trim_collapse_ws)"
+
+  # Reorder "Last, First Middle" to "First Middle Last" for alias derivation.
+  if [[ "$norm" =~ ^([^,]+),[[:space:]]*([^,]+)$ ]]; then
+    norm="${BASH_REMATCH[2]} ${BASH_REMATCH[1]}"
   fi
-  # Fold to ASCII before lowercasing to match requested behavior (e.g., "Jürgen" -> "jurgen").
-  out="$(ascii_fold "$out")"
-  out="$(to_lower "$out")"
-  # Spaces to hyphens, then collapse non-alnum (from current locale) to hyphens.
-  out="${out// /-}"
+
+  # ASCII fold and lowercase to match requested behavior (e.g., "Jürgen" -> "jurgen").
+  norm="$(ascii_fold "$norm")"
+  norm="$(to_lower "$norm")"
+
+  # Keep alnum and hyphens; turn everything else into spaces for tokenization.
+  norm="$(sed -E 's/[^[:alnum:]-]+/ /g; s/[[:space:]]+/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//' <<< "$norm")"
+
+  # Tokenize; avoid set -e pitfalls by guarding empty input.
+  if [[ -n "$norm" ]]; then
+    IFS=' ' read -r -a tokens <<< "$norm" || true
+  fi
+
+  if (( ${#tokens[@]} >= 2 )); then
+    first="${tokens[0]}"
+    last="${tokens[${#tokens[@]}-1]}"
+    out="${first}-${last}"
+  elif (( ${#tokens[@]} == 1 )); then
+    out="${tokens[0]}"
+  else
+    out=""
+  fi
+
+  # Final sanitize to ensure only [A-Za-z0-9-], collapse hyphens, trim.
   out="$(sed -E 's/[^[:alnum:]-]+/-/g; s/-+/-/g; s/^-+//; s/-+$//' <<< "$out")"
   printf '%s' "$out"
 }
 
-# Normalize display name:
-# - Drop comma in "Last, First" by default (keep order), unless KEEP_COMMA=1.
-# - Collapse whitespace; ensure safe for double-quote wrapping by escaping ".
+# Normalize display name for storage:
+# - If KEEP_COMMA!=1 and name is "Last, First Middle", reorder to "First Middle Last".
+# - Collapse whitespace; escape double quotes for safe storage.
 normalize_display_name() {
   local name="$1" out
   out="$name"
+
   if [[ "${KEEP_COMMA:-0}" != "1" ]]; then
-    out=$(sed -E 's/^([^,]+),[[:space:]]*([^,]+)$/\1 \2/' <<< "$out")
+    if [[ "$out" =~ ^([^,]+),[[:space:]]*([^,]+)$ ]]; then
+      out="${BASH_REMATCH[2]} ${BASH_REMATCH[1]}"
+    fi
   fi
-  out=$(printf '%s' "$out" | trim_collapse_ws)
+
+  out="$(printf '%s' "$out" | trim_collapse_ws)"
   out="${out//\"/\\\"}"
   printf '%s' "$out"
 }
@@ -339,7 +365,7 @@ OPTIONS:
   -F          filter out all email addresses that are probably impersonal
   -b          backup the current alias file (if it exists) to *.prev
   -n          create a new alias file instead of modifying the current one
-  -C          keep commas in display names (default: drop comma in "Last, First")
+   -C          keep commas in display names literally (default: reorder "Last, First ..." -> "First ... Last")
   -h          display this help and exit
 EOF
   exit 1
