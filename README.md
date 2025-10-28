@@ -123,10 +123,10 @@ https://konfekt.github.io/blog/2016/12/11/sane-cron-setup
   Discussion of notmuch-based approaches: https://github.com/vimpostor/dotfiles/commit/449f7aaa61fc8caf796976567640868e247fcfce#commitcomment-132976373
 - vim-mutt-aliases:
   Vim completion from the mutt alias file: https://github.com/Konfekt/vim-mutt-aliases
-- auto_add_alias.sh:
-  Add alias via `$display_filter` for each opened e-mail:
-  http://wcaleb.org/blog/mutt-tips
-  Extended in: https://github.com/teddywing/mutt-alias-auto-add
+- [auto_add_alias.sh](https://gist.github.com/Konfekt/fad42804eea7013fbe2e2a07a66bdf9d):
+  A shell script to add an alias via `$display_filter` for the sender of each opened e-mail:
+  Originally from http://wcaleb.org/blog/mutt-tips
+  and extended in https://github.com/teddywing/mutt-alias-auto-add
 
 ## License and credits
 
